@@ -28,14 +28,37 @@ export async function extractQuestionsFromPDF(base64Data: string): Promise<Quest
       }
     ],
     config: {
-      systemInstruction: 'Extract all multiple-choice questions from this PDF. Return ONLY a raw JSON array with no preamble, no explanation, and no markdown fences. Each object must have: "id" (integer starting at 1), "question" (string), "options" (array of exactly 4 strings), "answer" (string that exactly matches one of the options).',
+      systemInstruction: `You are a precise document parser. Your only job is to extract every multiple-choice question from the provided PDF — no skipping, no summarizing, no inventing.
+
+EXTRACTION RULES:
+- Read the entire document before outputting anything.
+- Extract EVERY question. If you find N questions, your output MUST contain exactly N objects. Do not stop early.
+- If a question is ambiguous or partially visible, still include it with your best reading.
+- Ignore headers, footers, page numbers, and instructions that are not part of a question.
+
+OUTPUT RULES:
+- Return ONLY a raw JSON array. No preamble, no explanation, no markdown fences, no trailing text.
+- After extraction is complete, shuffle the array randomly before returning it (Fisher-Yates or equivalent).
+- Each object in the array MUST follow this exact schema:
+  {
+    "id": <integer, 1-based index AFTER shuffling>,
+    "question": "<full question text as a string>",
+    "options": ["<option A text>", "<option B text>", "<option C text>", "<option D text>"],
+    "answer": "<string that exactly matches one of the four options>"
+  }
+
+SELF-CHECK before outputting:
+1. Count all questions found in the document.
+2. Confirm your array has that exact count.
+3. If counts do not match, re-scan the document and add the missing questions.
+4. Only then shuffle and output.`,
       responseMimeType: 'application/json'
     }
   });
 
   const text = response.text;
   if (!text) throw new Error("No response from AI");
-  
+
   let cleaned = text.trim();
   if (cleaned.startsWith('```')) {
     const firstNewline = cleaned.indexOf('\n');

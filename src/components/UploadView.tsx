@@ -32,6 +32,8 @@ export function UploadView() {
           const errMsg = err?.message || "";
           if (errMsg.includes("503") || errMsg.toLowerCase().includes("high demand")) {
             setError("Gemini is currently experiencing high demand. Please wait a couple of minutes and try again!");
+          } else if (errMsg.includes("403") || errMsg.toLowerCase().includes("leaked")) {
+            setError("Your Gemini API key was disabled by Google because it was leaked. Please generate a new API key and update your environment variables.");
           } else {
             setError(errMsg || "Could not extract questions. Please check your PDF and try again.");
           }
@@ -47,6 +49,8 @@ export function UploadView() {
       const errMsg = err?.message || "";
       if (errMsg.includes("503") || errMsg.toLowerCase().includes("high demand")) {
         setError("Gemini is currently experiencing high demand. Please wait a couple of minutes and try again!");
+      } else if (errMsg.includes("403") || errMsg.toLowerCase().includes("leaked")) {
+        setError("Your Gemini API key was disabled by Google because it was leaked. Please generate a new API key and update your environment variables.");
       } else {
         setError("Could not extract questions. Please check your PDF and try again.");
       }
