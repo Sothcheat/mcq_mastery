@@ -1,60 +1,53 @@
 import React, { useState, useRef } from 'react';
 import { useStore } from '../store';
-import { extractQuestionsFromPDF } from '../lib/gemini';
+import { extractTextFromPDF, extractQuestionsFromText, shuffleQuestions } from '../lib/exam-extractor';
 import { UploadCloud, Loader2 } from 'lucide-react';
+
+type LoadingStage = 'idle' | 'extracting' | 'processing';
+
+const STAGE_MESSAGES: Record<LoadingStage, string> = {
+  idle: '',
+  extracting: 'Reading PDF…',
+  processing: 'Extracting questions with AI (this may take a minute)…',
+};
 
 export function UploadView() {
   const [isDragging, setIsDragging] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [stage, setStage] = useState<LoadingStage>('idle');
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const setQuestions = useStore(state => state.setQuestions);
   const setExamStatus = useStore(state => state.setExamStatus);
 
+  const isLoading = stage !== 'idle';
+
   const handleFile = async (file: File) => {
     if (file.type !== 'application/pdf') {
       setError('Please upload a PDF file.');
       return;
     }
+
     setError('');
-    setIsLoading(true);
 
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const base64Data = reader.result as string;
-          const questions = await extractQuestionsFromPDF(base64Data);
-          setQuestions(questions);
-          setExamStatus('setup');
-        } catch (err: any) {
-          const errMsg = err?.message || "";
-          if (errMsg.includes("503") || errMsg.toLowerCase().includes("high demand")) {
-            setError("Gemini is currently experiencing high demand. Please wait a couple of minutes and try again!");
-          } else if (errMsg.includes("403") || errMsg.toLowerCase().includes("leaked")) {
-            setError("Your Gemini API key was disabled by Google because it was leaked. Please generate a new API key and update your environment variables.");
-          } else {
-            setError(errMsg || "Could not extract questions. Please check your PDF and try again.");
-          }
-          setIsLoading(false);
-        }
-      };
-      reader.onerror = () => {
-        setError("Error reading file.");
-        setIsLoading(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      const errMsg = err?.message || "";
-      if (errMsg.includes("503") || errMsg.toLowerCase().includes("high demand")) {
-        setError("Gemini is currently experiencing high demand. Please wait a couple of minutes and try again!");
-      } else if (errMsg.includes("403") || errMsg.toLowerCase().includes("leaked")) {
-        setError("Your Gemini API key was disabled by Google because it was leaked. Please generate a new API key and update your environment variables.");
-      } else {
-        setError("Could not extract questions. Please check your PDF and try again.");
-      }
-      setIsLoading(false);
+      // Stage 1 – extract raw text in the browser using unpdf
+      setStage('extracting');
+      const text = await extractTextFromPDF(file);
+
+      // Stage 2 – send text to backend for AI extraction
+      setStage('processing');
+      const questions = await extractQuestionsFromText(text);
+
+      // Shuffle questions and their options before storing in state
+      const shuffled = shuffleQuestions(questions);
+
+      setQuestions(shuffled);
+      setExamStatus('setup');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg || 'Could not extract questions. Please check your PDF and try again.');
+      setStage('idle');
     }
   };
 
@@ -90,14 +83,14 @@ export function UploadView() {
           {isLoading ? (
             <div className="flex flex-col items-center space-y-4">
               <Loader2 className="w-10 h-10 animate-spin text-accent" />
-              <p className="text-sm font-medium">Extracting questions from PDF...</p>
+              <p className="text-sm font-medium">{STAGE_MESSAGES[stage]}</p>
             </div>
           ) : (
             <div className="flex flex-col items-center space-y-4">
               <div className="p-4 bg-accent/10 rounded-full text-accent">
                 <UploadCloud className="w-8 h-8" />
               </div>
-              <p className="text-sm font-medium">Drag & drop your PDF here, or click to browse</p>
+              <p className="text-sm font-medium">Drag &amp; drop your PDF here, or click to browse</p>
             </div>
           )}
           <input
