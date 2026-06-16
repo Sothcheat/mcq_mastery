@@ -1,6 +1,5 @@
 export type Question = {
   id: number;
   question: string;
-  options: string[];   // exactly 4 options
-  answer: string;      // must exactly match one of the options strings
+  options: string[];   // 2–6 option strings, prefixes stripped
 }
