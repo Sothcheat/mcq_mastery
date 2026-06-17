@@ -19,48 +19,46 @@ interface Question {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI client pointed at Hugging Face Inference API
+// OpenAI client pointed at Google AI Studio (OpenAI-compatible endpoint)
 // ---------------------------------------------------------------------------
 const client = new OpenAI({
-    baseURL: "https://router.huggingface.co/v1/",
-    apiKey: process.env.HUGGINGFACE_API_KEY ?? "",
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    apiKey: process.env.GEMINI_API_KEY ?? "",
 });
 
-// Llama 3.1 8B is reliably served on the HuggingFace free router.
-// Try "Qwen/Qwen2.5-7B-Instruct" if you want a drop-in upgrade,
-// but verify it's available on your tier first.
-// const MODEL = "meta-llama/Llama-3.1-8B-Instruct";
-const MODEL = "Qwen/Qwen2.5-7B-Instruct";
+const MODEL = "gemma-4-26b-a4b-it";
 
-const SYSTEM_PROMPT = `You are a JSON extraction engine. Your task: find every multiple-choice question in the input and return a JSON array.
+const SYSTEM_PROMPT = `You are a precise educational data parser. Extract every multiple-choice question from the text into a strict JSON array.
 
-OUTPUT: A raw JSON array only. No markdown fences, no explanation, no text outside the array.
-SCHEMA: [{"id":"q1","question":"...","options":["...","...","...","..."]}]
+OUTPUT CONTRACT:
+- Output ONLY a raw JSON array. No markdown. No preamble. No trailing text.
+- NEVER stop mid-array. Complete every object before stopping.
 
-OPTION MARKERS — options are introduced by any of these prefixes (strip the prefix from the option text):
-  a,  b,  c,  d,  e       (lowercase letter + comma)
-  a.  b.  c.  d.  e.      (lowercase letter + period)
-  a)  b)  c)  d)  e)      (lowercase letter + paren)
-  A.  B.  C.  D.  E.      (uppercase letter + period)
-  A)  B)  C)  D)  E)      (uppercase letter + paren)
-  A,  B,  C,  D,  E,      (uppercase letter + comma)
+SCHEMA (strict):
+[{"id":"q1","question":"Question text only","options":["Option A","Option B","Option C","Option D"]}]
 
-HOW TO SPLIT squashed text (question and options run together):
-1. Find the first option marker (e.g. "a, " or "A. " or "a) ").
-2. Everything BEFORE that marker = the question field.
-3. Each segment between consecutive markers = one option (strip the marker prefix).
+PARSING RULES:
+1. OPTIONS COUNT: Questions may have 2 to 6 options. Extract ALL of them — never truncate to 4.
+2. STRIP ALL PREFIXES: Options arrive with many prefix styles. Strip every one completely:
+   - Letter-dot: "A. " "B. " "C. "
+   - Letter-comma: "a, " "b, " "c, "
+   - Letter-paren: "A) " "B) " "C) "
+   - Bullets: "• " "- " "* "
+   Options in the "options" array must be clean text with no prefix characters.
+3. SPLIT SQUASHED TEXT: If the question and options run together, find the first option marker (any format above) — everything before it is the "question", everything from the first marker onward is options.
+4. "question" field contains question text ONLY — never include option text inside it.
+6. Skip any question that is truncated or cut off — do not include partial questions.
 
-EXAMPLE:
-Input:  "The primary structure of protein represents a, Linear sequence of amino acids b, 3-dimensional folded structure c, Helical arrangement d, Sub-unit assembly"
-Output: [{"id":"q1","question":"The primary structure of protein represents","options":["Linear sequence of amino acids","3-dimensional folded structure","Helical arrangement","Sub-unit assembly"]}]
+EXAMPLES:
 
-RULES:
-1. Extract EVERY question you can find — do not skip a question just because its format is unusual.
-2. The "question" field must contain only the question stem, never the options.
-3. Strip option-marker prefixes completely from every option string.
-4. If a question has fewer than 2 options visible, still include it with whatever options you can see.
-5. Only omit a question if the question text itself is completely missing or unreadable.
-6. Output nothing except the JSON array.`;
+Input: "The powerhouse of the cell is A. Nucleus B. Mitochondria C. Ribosome D. Golgi apparatus E. Lysosome"
+Output: [{"id":"q1","question":"The powerhouse of the cell is","options":["Nucleus","Mitochondria","Ribosome","Golgi apparatus","Lysosome"]}]
+
+Input: "DNA replication is a, Semi-conservative b, Conservative c, Dispersive"
+Output: [{"id":"q1","question":"DNA replication is","options":["Semi-conservative","Conservative","Dispersive"]}]
+
+Input: "Insulin is produced by • Alpha cells • Beta cells • Delta cells • PP cells"
+Output: [{"id":"q1","question":"Insulin is produced by","options":["Alpha cells","Beta cells","Delta cells","PP cells"]}]`;
 
 // ---------------------------------------------------------------------------
 // Robust JSON array extraction
@@ -167,9 +165,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .json({ error: 'Missing or empty "chunk" field in request body.' });
     }
 
-    if (!process.env.HUGGINGFACE_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
         return res.status(500).json({
-            error: "HUGGINGFACE_API_KEY environment variable is not set on the server.",
+            error: "GEMINI_API_KEY environment variable is not set on the server.",
         });
     }
 
@@ -181,7 +179,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 { role: "system", content: SYSTEM_PROMPT },
                 { role: "user", content: chunk },
             ],
-            // response_format omitted — unreliable on HuggingFace; we parse manually below.
+            response_format: {
+                type: "json_schema",
+                json_schema: {
+                    name: "mcq_result",
+                    strict: true,
+                    schema: {
+                        type: "object",
+                        required: ["questions"],
+                        additionalProperties: false,
+                        properties: {
+                            questions: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    required: ["id", "question", "options"],
+                                    additionalProperties: false,
+                                    properties: {
+                                        id:       { type: "string" },
+                                        question: { type: "string" },
+                                        options:  { type: "array", items: { type: "string" } },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as Parameters<
+                typeof client.chat.completions.create
+            >[0]["response_format"],
             temperature: 0.1,
             max_tokens: 4096,
         });
@@ -196,7 +222,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ questions: [] });
     }
 
-    const questions = extractJsonArray(content)
+    // Structured output wraps the array in { questions: [...] }.
+    // Fall back to the regex salvage parser for any malformed output.
+    let rawQuestions: RawQuestion[] = [];
+    try {
+        const parsed = JSON.parse(content) as { questions?: RawQuestion[] } | RawQuestion[];
+        if (Array.isArray(parsed)) {
+            rawQuestions = parsed;
+        } else if (parsed && Array.isArray((parsed as { questions?: RawQuestion[] }).questions)) {
+            rawQuestions = (parsed as { questions: RawQuestion[] }).questions;
+        }
+    } catch {
+        rawQuestions = extractJsonArray(content);
+    }
+
+    const questions = rawQuestions
         .map(normaliseQuestion)
         .filter((q): q is Question => q !== null);
 

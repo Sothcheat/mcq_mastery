@@ -145,17 +145,27 @@ function regexParseQuestion(fragment: string): ParsedQuestion | null {
     }
     if (markers.length < 2) return null;
 
-    // Find the 'a' that begins a sequential run a, b, c, ...
+    // Find the 'a' that starts the options run, then accept any markers that
+    // follow in strictly increasing alphabetical order (a→c→d→e is fine — the
+    // PDF may simply omit option b without the question being malformed).
     const startIdx = markers.findIndex((x) => x.letter === "a");
     if (startIdx === -1) return null;
 
-    const expected = ["a", "b", "c", "d", "e"];
     const run: typeof markers = [];
+    let prevLetter = "";
     for (let i = startIdx; i < markers.length; i++) {
-        if (markers[i].letter === expected[run.length]) run.push(markers[i]);
-        else break;
+        const letter = markers[i].letter;
+        if (run.length === 0 && letter === "a") {
+            run.push(markers[i]);
+            prevLetter = letter;
+        } else if (run.length > 0 && letter > prevLetter && letter <= "e") {
+            run.push(markers[i]);
+            prevLetter = letter;
+        } else {
+            break;
+        }
     }
-    if (run.length < 2) return null; // need at least a & b
+    if (run.length < 2) return null;
 
     const question = cleaned.slice(0, run[0].start).trim();
     if (!question) return null;
@@ -262,7 +272,10 @@ export async function extractQuestionsFromText(
             if (hit) parsed.push(hit);
             else leftover.push(frag);
         }
-        chunks = groupFragments(leftover);
+        // Skip fragments that have no option markers — they're headers/titles
+        // and sending them to the LLM alongside real questions confuses the model.
+        const HAS_OPTION_MARKER = /\b[a-eA-E][,.)]\s/;
+        chunks = groupFragments(leftover.filter((f) => HAS_OPTION_MARKER.test(f)));
     }
 
     let completed = 0;
@@ -299,7 +312,9 @@ export async function extractQuestionsFromText(
     const seen = new Set<string>();
     const questions: Question[] = [];
     for (const it of parsed) {
-        const key = it.question.toLowerCase().replace(/[^a-z0-9]/g, "");
+        // Dedup key covers both stem and options so only truly identical questions
+        // (same text AND same options) are collapsed — different options = different entry.
+        const key = (it.question + it.options.join("")).toLowerCase().replace(/[^a-z0-9]/g, "");
         if (!key || seen.has(key)) continue;
         seen.add(key);
         questions.push({ id: questions.length + 1, question: it.question, options: it.options });

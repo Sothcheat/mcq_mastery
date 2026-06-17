@@ -26,6 +26,11 @@ export function ExamView() {
     setExamStatus('results');
   };
 
+  const goToPage = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
   const submitDialogContent = (
     <AlertDialogContent className="bg-surface border-muted/20 text-text">
       <AlertDialogHeader>
@@ -47,11 +52,11 @@ export function ExamView() {
 
   return (
     <div className="max-w-3xl mx-auto pb-28 space-y-6">
-      <Navigator 
-        totalPages={totalPages} 
-        currentPage={currentPage} 
-        setCurrentPage={setCurrentPage} 
-        questionsPerPage={questionsPerPage} 
+      <Navigator
+        totalPages={totalPages}
+        currentPage={currentPage}
+        setCurrentPage={goToPage}
+        questionsPerPage={questionsPerPage}
       />
       
       <div className="flex justify-between items-center text-sm font-medium text-muted mb-4 px-2">
@@ -64,7 +69,7 @@ export function ExamView() {
       <div className="flex justify-between items-center pt-8 px-2">
         <Button 
           variant="outline" 
-          onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+          onClick={() => goToPage(Math.max(0, currentPage - 1))}
           disabled={currentPage === 0}
           className="border-muted/30 hover:bg-muted/5"
         >
@@ -80,7 +85,7 @@ export function ExamView() {
         ) : (
           <Button 
             variant="outline" 
-            onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+            onClick={() => goToPage(Math.min(totalPages - 1, currentPage + 1))}
             className="border-muted/30 hover:bg-muted/5"
           >
             Next <ChevronRight className="w-4 h-4 ml-2" />
